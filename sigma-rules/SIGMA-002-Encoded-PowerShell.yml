@@ -1,0 +1,88 @@
+title: Encoded PowerShell Command Execution
+id: a7b3c2d1-9e0f-4g5h-6i7j-8k9l0m1n2o3p
+status: production
+description: |
+  Detects execution of PowerShell with encoded commands (-enc, -encodedcommand).
+  Encoded commands are often used to obfuscate malware delivery and bypass
+  security controls.
+
+  Real Case: SIEM-001 malware installation used:
+  powershell.exe -NoP -sta -NonI -W Hidden -Enc JABzAD0kKChSZXF1...
+  
+  This decoded to a download cradle fetching malware from C2 server.
+
+author: Security Operations Team
+date: 2026-02-15
+modified: 2026-02-18
+references:
+  - https://attack.mitre.org/techniques/T1059/001/
+  - Atomic Red Team T1059.001
+
+logsource:
+  product: windows
+  service: sysmon
+
+detection:
+  selection_powershell:
+    EventID: 1
+    Image|endswith:
+      - 'powershell.exe'
+      - 'pwsh.exe'
+  
+  selection_encoded:
+    CommandLine|contains:
+      - ' -enc '
+      - ' -EncodedCommand'
+      - ' -e '
+      - '-encodedcommand'
+  
+  selection_iex:
+    CommandLine|contains:
+      - 'IEX('
+      - 'Invoke-Expression'
+  
+  filter_exclusion:
+    # Filter out known legitimate tools
+    ParentImage|contains:
+      - 'C:\Program Files\Splunk'
+      - 'C:\Program Files\Microsoft'
+      - 'C:\ProgramData\Chef'
+  
+  condition: (selection_powershell and selection_encoded) or (selection_powershell and selection_iex) | not filter_exclusion
+
+fields:
+  - EventID
+  - Image
+  - CommandLine
+  - ParentImage
+  - ComputerName
+  - User
+
+falsepositives:
+  - Legitimate admin scripts using encoding
+  - PowerShell updates from vendor (Microsoft)
+  - Configuration management tools (Chef, Puppet, Ansible)
+  - Windows Update scripts
+
+level: high
+tags:
+  - attack.execution
+  - attack.defense_evasion
+  - attack.t1059.001
+  - detection.endpoint
+
+---
+
+# Splunk SPL
+# index=sysmon EventCode=1 Image="*powershell.exe"
+# | where match(CommandLine, "(?i)(-enc|-encodedcommand|IEX)")
+# | stats count by Computer, User, CommandLine
+# | where count >= 1
+
+---
+
+# Sentinel KQL
+# DeviceProcessEvents
+# | where ProcessName contains "powershell.exe"
+# | where CommandLine has_any ("-enc", "-EncodedCommand", "IEX(")
+# | project TimeGenerated, DeviceName, AccountName, ProcessName, CommandLine

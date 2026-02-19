@@ -1,0 +1,92 @@
+title: Excessive Failed Logons - Brute Force Detection
+id: e53e49f7-7c0a-4a32-a612-35b123a95c3e
+status: production
+description: |
+  Detects multiple failed logon attempts in a short time window,
+  indicating a potential brute force attack against a user account.
+  Threshold: 10 or more failed logons within 15 minutes.
+
+  Real Case: SIEM-001 investigation identified 2,147 failed logons
+  targeting svc_admin account over 6 hours from 17 distributed sources.
+
+author: Security Operations Team
+date: 2026-02-15
+modified: 2026-02-18
+references:
+  - https://docs.microsoft.com/en-us/windows/security/threat-protection/auditing/audit-logon
+  - MITRE ATT&CK T1110 - Brute Force
+
+logsource:
+  product: windows
+  service: security
+
+detection:
+  selection:
+    EventID: 4625
+    # Filter out machine account logons
+    Account|endswith: '$'
+    TargetUserName|contains: '-'
+  
+  timeframe: 15m
+  condition: selection | count(*) by Account >= 10
+
+fields:
+  - EventID
+  - Account
+  - TargetUserName
+  - TargetDomainName
+  - ComputerName
+  - IpAddress
+  - LogonType
+  - AuthenticationPackageName
+  - FailureReason
+
+falsepositives:
+  - Legitimate account lockout testing
+  - Scheduled task with wrong credentials (retry logic)
+  - VPN client reconnection attempts
+  - Application auto-retry logic (before backoff)
+
+level: high
+tags:
+  - attack.credential_access
+  - attack.t1110
+  - detection.endpoint
+
+---
+
+# Splunk SPL Conversion
+# index=wineventlog EventCode=4625
+# | bucket _time span=15m
+# | stats count as failed_logons by _time, Account, ComputerName
+# | where failed_logons >= 10
+# | eval risk_score=failed_logons*failed_logons
+# | sort - risk_score
+
+---
+
+# Elasticsearch Query (ECS format)
+# GET security-*/_search
+# {
+#   "query": {
+#     "bool": {
+#       "must": [
+#         { "term": { "event.code": "4625" } },
+#         { "range": { "@timestamp": { "gte": "now-15m" } } }
+#       ],
+#       "must_not": [
+#         { "wildcard": { "user.name": "*$" } }
+#       ]
+#     }
+#   },
+#   "aggs": {
+#     "accounts": {
+#       "terms": { "field": "user.name" },
+#       "aggs": {
+#         "failed_logons": {
+#           "value_count": { "field": "event.code" }
+#         }
+#       }
+#     }
+#   }
+# }
